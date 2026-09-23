@@ -1,0 +1,70 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+    volumes:
+      # Persist downloaded models across restarts.
+      - ollama_models:/root/.ollama
+    # Expose to the host only if you want to pull/manage models from outside
+    # the compose network. The bot reaches Ollama over the internal network,
+    # so this port mapping is optional.
+    ports:
+      - "127.0.0.1:11434:11434"
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    # --- GPU (optional) ---
+    # Uncomment to give Ollama access to NVIDIA GPUs (needs nvidia-container-toolkit).
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+  bot:
+    build: .
+    container_name: ai-telegram-bot
+    restart: unless-stopped
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      # --- Required ---
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?set TELEGRAM_BOT_TOKEN in your .env}
+      # Point the bot at the Ollama service over the compose network.
+      AI_API_BASE: http://ollama:11434/v1
+      AI_MODEL: ${AI_MODEL:-llama3}
+      # AI_API_KEY is not needed for local Ollama; leave empty.
+      AI_API_KEY: ${AI_API_KEY:-}
+
+      # --- Optional tuning ---
+      SYSTEM_PROMPT: ${SYSTEM_PROMPT:-You are a helpful, friendly, and knowledgeable AI assistant.}
+      MAX_TOKENS: ${MAX_TOKENS:-1024}
+      TEMPERATURE: ${TEMPERATURE:-0.7}
+      ALLOWED_USERS: ${ALLOWED_USERS:-}
+      ADMIN_USERS: ${ADMIN_USERS:-}
+
+      # --- Mode ---
+      # Leave WEBHOOK_URL empty (default) to run in POLLING mode — no public
+      # URL or TLS needed. To switch to webhook mode, set WEBHOOK_URL to your
+      # public HTTPS base URL and put a TLS reverse proxy in front of port 8443.
+      WEBHOOK_URL: ${WEBHOOK_URL:-}
+      WEBHOOK_PORT: ${WEBHOOK_PORT:-8443}
+      WEBHOOK_SECRET_TOKEN: ${WEBHOOK_SECRET_TOKEN:-}
+      HEALTH_PORT: ${HEALTH_PORT:-8081}
+    volumes:
+      # Persist the SQLite conversation database.
+      - ./bot_data:/app/bot_data
+    # Only needed in webhook mode (front these with a TLS reverse proxy).
+    ports:
+      - "8443:8443"
+      - "127.0.0.1:8081:8081"
+
+volumes:
+  ollama_models:

@@ -1,0 +1,17 @@
+.git
+.gitignore
+.env
+.env.example
+
+# Python caches / virtualenvs
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Runtime data (SQLite DB, exports, reports) — keep it out of the image
+bot_data/
+
+# Node artifacts (if any)
+node_modules
+npm-debug.log
