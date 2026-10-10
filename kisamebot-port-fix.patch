@@ -1,0 +1,79 @@
+From 5c5ae05b98259ff95a8ab08e6abb2b79298ff53f Mon Sep 17 00:00:00 2001
+From: kisamebot-fixer <bot@example.com>
+Date: Sat, 10 Oct 2026 23:25:54 +0800
+Subject: [PATCH] Fix port binding: open /health in both polling and webhook
+ modes; bind to platform $PORT
+
+- bot.py: move start_health_server() out of the webhook-only branch so a port
+  is always opened (fixes Railway/Render 'No open ports detected' hang in
+  polling mode).
+- config.py: HEALTH_PORT now prefers the platform-injected PORT env var,
+  falling back to HEALTH_PORT then 8081.
+- health_server.py: /health response reports the actual mode (polling/webhook)
+  instead of a hardcoded 'webhook'.
+---
+ bot.py           | 10 +++++++---
+ config.py        |  4 +++-
+ health_server.py |  3 ++-
+ 3 files changed, 12 insertions(+), 5 deletions(-)
+
+diff --git a/bot.py b/bot.py
+index 6c351cb..6480e86 100644
+--- a/bot.py
++++ b/bot.py
+@@ -475,6 +475,13 @@ def main() -> None:
+     # Register error handler
+     app.add_error_handler(error_handler)
+ 
++    # Always start the health-check server (GET /health) so the hosting
++    # platform (Railway/Render) detects an open port — in BOTH polling and
++    # webhook modes. In polling mode the bot makes only outbound calls to
++    # Telegram and would otherwise never open a port, causing deploys to hang
++    # on "No open ports detected, continuing to scan...".
++    start_health_server()
++
+     # Start the bot — webhook mode if WEBHOOK_URL is set, else polling.
+     if Config.WEBHOOK_URL:
+         # The path Telegram POSTs updates to. Defaults to the bot token so the
+@@ -482,9 +489,6 @@ def main() -> None:
+         url_path = Config.WEBHOOK_PATH or Config.TELEGRAM_BOT_TOKEN
+         webhook_url = f"{Config.WEBHOOK_URL.rstrip('/')}/{url_path.lstrip('/')}"
+ 
+-        # Start the health-check server (GET /health) on a separate port.
+-        start_health_server()
+-
+         logger.info(
+             f"Bot is running in WEBHOOK mode on "
+             f"{Config.WEBHOOK_LISTEN}:{Config.WEBHOOK_PORT} "
+diff --git a/config.py b/config.py
+index 8958a81..1018c31 100644
+--- a/config.py
++++ b/config.py
+@@ -44,7 +44,9 @@ class Config:
+     WEBHOOK_SECRET_TOKEN: str = os.getenv("WEBHOOK_SECRET_TOKEN", "")
+ 
+     # Health check (only started in webhook mode). Exposes GET /health.
+-    HEALTH_PORT: int = int(os.getenv("HEALTH_PORT", "8081"))
++    # Prefer the platform-injected PORT (Railway/Render) so the health server
++    # binds to the port the platform scans for; fall back to HEALTH_PORT locally.
++    HEALTH_PORT: int = int(os.getenv("PORT", os.getenv("HEALTH_PORT", "8081")))
+ 
+     # Access control
+     ALLOWED_USERS: list[int] = [
+diff --git a/health_server.py b/health_server.py
+index 5f8e4c4..e8fcebd 100644
+--- a/health_server.py
++++ b/health_server.py
+@@ -13,7 +13,8 @@ class _HealthHandler(BaseHTTPRequestHandler):
+ 
+     def do_GET(self):  # noqa: N802 — required by BaseHTTPRequestHandler
+         if self.path == "/health":
+-            payload = json.dumps({"status": "ok", "mode": "webhook"}).encode()
++            mode = "webhook" if Config.WEBHOOK_URL else "polling"
++            payload = json.dumps({"status": "ok", "mode": mode}).encode()
+             self.send_response(200)
+             self.send_header("Content-Type", "application/json")
+             self.send_header("Content-Length", str(len(payload)))
+-- 
+2.34.1
+
